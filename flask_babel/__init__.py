@@ -10,6 +10,7 @@
 """
 from __future__ import absolute_import
 import os
+import six
 
 from datetime import datetime
 from contextlib import contextmanager
@@ -37,21 +38,21 @@ class Babel(object):
     """
 
     default_date_formats = ImmutableDict({
-        'time':             'medium',
-        'date':             'medium',
-        'datetime':         'medium',
-        'time.short':       None,
-        'time.medium':      None,
-        'time.full':        None,
-        'time.long':        None,
-        'date.short':       None,
-        'date.medium':      None,
-        'date.full':        None,
-        'date.long':        None,
-        'datetime.short':   None,
-        'datetime.medium':  None,
-        'datetime.full':    None,
-        'datetime.long':    None,
+        'time': 'medium',
+        'date': 'medium',
+        'datetime': 'medium',
+        'time.short': None,
+        'time.medium': None,
+        'time.full': None,
+        'time.long': None,
+        'date.short': None,
+        'date.medium': None,
+        'date.full': None,
+        'date.long': None,
+        'datetime.short': None,
+        'datetime.medium': None,
+        'datetime.full': None,
+        'datetime.long': None,
     })
 
     def __init__(self, app=None, default_locale='en', default_timezone='UTC',
@@ -186,14 +187,65 @@ class Babel(object):
     def translation_directories(self):
         directories = self.app.config.get(
             'BABEL_TRANSLATION_DIRECTORIES',
-            'translations'
-        ).split(';')
+            ['translations'],
+        )
+
+        if isinstance(directories, six.string_types):
+            directories = directories.split(';')
 
         for path in directories:
             if os.path.isabs(path):
                 yield path
             else:
                 yield os.path.join(self.app.root_path, path)
+
+    @property
+    def translation_domains(self):
+        domains = self.app.config.get(
+            'BABEL_TRANSLATION_DOMAINS',
+            None,
+        )
+
+        if domains is None:
+            for path in self.translation_directories:
+                yield Domain(self.app, dirname=path)
+        else:
+            for domain in domains:
+                domain.app = self.app
+                yield domain
+
+
+class Domain(object):
+    """Localization domain. By default will use look for tranlations in Flask application directory
+    and "messages" domain - all message catalogs should be called ``messages.mo``.
+    """
+    def __init__(self, app=None, dirname=None, domain='messages'):
+        self.app = app
+        self.dirname = dirname
+        self.domain = domain
+
+    @property
+    def translations_path(self):
+        """Returns translations directory path. Override if you want
+        to implement custom behavior.
+        """
+        return self.dirname or os.path.join(self.app.root_path, 'translations')
+
+    def get_translations(self):
+        """Returns the correct gettext translations that should be used for
+        this request.  This will never fail and return a dummy translation
+        object if used outside of the request or if a translation cannot be
+        found.
+        """
+        locale = get_locale()
+
+        dirname = self.translations_path
+
+        translations = support.Translations.load(dirname,
+                                                 locale,
+                                                 domain=self.domain)
+
+        return translations
 
 
 def get_translations():
@@ -212,8 +264,8 @@ def get_translations():
         translations = support.Translations()
 
         babel = current_app.extensions['babel']
-        for dirname in babel.translation_directories:
-            catalog = support.Translations.load(dirname, [get_locale()])
+        for domain in babel.translation_domains:
+            catalog = domain.get_translations()
             translations.merge(catalog)
             # FIXME: Workaround for merge() being really, really stupid. It
             # does not copy _info, plural(), or any other instance variables
