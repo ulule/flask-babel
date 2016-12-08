@@ -29,6 +29,8 @@ else:
 from flask_babel._compat import string_types
 from flask_babel.speaklater import LazyString
 
+_cache = {}
+
 
 class Babel(object):
     """Central controller class that can be used to configure how
@@ -231,21 +233,15 @@ class Domain(object):
         """
         return self.dirname or os.path.join(self.app.root_path, 'translations')
 
-    def get_translations(self):
+    def get_translations(self, locale):
         """Returns the correct gettext translations that should be used for
         this request.  This will never fail and return a dummy translation
         object if used outside of the request or if a translation cannot be
         found.
         """
-        locale = get_locale()
-
-        dirname = self.translations_path
-
-        translations = support.Translations.load(dirname,
-                                                 locale,
-                                                 domain=self.domain)
-
-        return translations
+        return support.Translations.load(self.translations_path,
+                                         locale,
+                                         domain=self.domain)
 
 
 def get_translations():
@@ -260,21 +256,29 @@ def get_translations():
         return support.NullTranslations()
 
     translations = getattr(ctx, 'babel_translations', None)
+
     if translations is None:
-        translations = support.Translations()
+        locale = get_locale()
 
-        babel = current_app.extensions['babel']
-        for domain in babel.translation_domains:
-            catalog = domain.get_translations()
-            translations.merge(catalog)
-            # FIXME: Workaround for merge() being really, really stupid. It
-            # does not copy _info, plural(), or any other instance variables
-            # populated by GNUTranslations. We probably want to stop using
-            # `support.Translations.merge` entirely.
-            if hasattr(catalog, 'plural'):
-                translations.plural = catalog.plural
+        translations = _cache.get(locale)
 
-        ctx.babel_translations = translations
+        if translations is None:
+            translations = support.Translations()
+
+            babel = current_app.extensions['babel']
+            for domain in babel.translation_domains:
+                catalog = domain.get_translations(locale)
+                translations.merge(catalog)
+                # FIXME: Workaround for merge() being really, really stupid. It
+                # does not copy _info, plural(), or any other instance variables
+                # populated by GNUTranslations. We probably want to stop using
+                # `support.Translations.merge` entirely.
+                if hasattr(catalog, 'plural'):
+                    translations.plural = catalog.plural
+
+            _cache[locale] = translations
+
+        ctx.babel_translations = _cache[locale]
 
     return translations
 
